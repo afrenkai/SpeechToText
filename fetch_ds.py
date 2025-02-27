@@ -1,9 +1,11 @@
 from datasets import load_dataset
+import os
 
-train_ds = load_dataset("mozilla-foundation/common_voice_17_0", "en", split ='train')
+def save_ds(path: str = "Data"):
+    os.makedirs(path, exist_ok=True)
+    ds = load_dataset("bookbot/ljspeech_phonemes")
+    ds.save_to_disk(path)
+    print(f'saved dataset to {path}')
 
-
-for eg in train_ds:
-    print(eg)
-    break
-
+if __name__ == "__main__":
+    save_ds()

@@ -1,1 +1,9 @@
 datasets
+polars
+numpy
+matplotlib
+torch
+torchaudio
+librosa
+soundfile
+seaborn
