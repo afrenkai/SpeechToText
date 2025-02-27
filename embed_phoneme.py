@@ -33,42 +33,49 @@ class PhonemeEmbedding(nn.Module):
     def forward(self, x):
         return self.embedding(x)
 
-    def train_embeddings(self, ds: Dataset, phoneme_seqs, epochs: int = 100, batch_size: int = 32):
+    def train_embeddings(self, phoneme_seqs, epochs: int = 20, batch_size: int = 32):
         #cuda stuff not needed for now but ill def want it later
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.to(device)
 
-        # need to update to use actual data and not a placeholder
-        vocab_size = len(phonemes_dict)
-        # potentiall later: pass in list of seq with int idxs.
+        # print(f"Vocabulary Size: {vocab_size}")
+        # print(f"Max Index in Phonemes Dict: {max(phonemes_dict.values())}")
+
 
         losses = []
+        dataset = []
+        for seq in phoneme_seqs:
+            if len(seq) < 2:
+                continue
+            dataset.append(torch.tensor(seq, dtype=torch.long, device=device))
+
         for epoch in tqdm(range(epochs)):
             total_loss = 0
-            for seq in phoneme_seqs:
-                if len(seq) < 2:
-                    print('short seq')
-                    continue
-                seq = seq.to(device)
+            self.train()
+
+            for i in range(0, len(dataset), batch_size):
+                batch = dataset[i: i + batch_size]
+
                 self.optimizer.zero_grad()
+                loss = 0
+                for seq in batch:
+                    if len(seq) < 2:
+                        continue
+                    inputs = seq[:-1]
+                    targets = seq[1:]
 
-                for i in range(1, len(seq)-1):
-                    center = seq[i]
-                    context = [idx for idx in seq[i - 1 : i + 2] if idx < vocab_size]  # Filter out invalid indices
-                    context = torch.tensor(context, dtype=torch.long, device=device)
+                    outputs = self.embedding(inputs)
+                    loss += self.criterion(outputs, targets)
 
-                    output = self.embedding(context)
-                    output = output.mean(dim = 0, keepdims = True)
-                    target = torch.tensor([center], dtype=torch.long, device = device)
-                    loss = self.criterion(output, target)
-                    loss.backward()
-                    print('backprop done')
-                    self.optimizer.step()
-                    total_loss += loss.item()
+                loss.backward()
+                self.optimizer.step()
+                total_loss += loss.item()
 
-                losses.append(total_loss / len(phoneme_seqs))
-                if epoch % 10 == 0:
-                    print(f'epoch {epoch}, L: {losses[-1]}')
+            avg_loss = total_loss / len(dataset)
+            losses.append(avg_loss)
+
+            if epoch % 10 == 0:
+                print(f'Epoch {epoch}, Loss: {avg_loss:.4f}')
         self.plot_loss(losses)
 
 
@@ -128,7 +135,7 @@ if __name__ == "__main__":
     vocab_size = len(phonemes_vocab)
     model = PhonemeEmbedding(vocab_size, PHONEME_EMBEDDING_DIM)
 
-    model.train_embeddings(dataset, phoneme_seqs, epochs=100)
+    model.train_embeddings(phoneme_seqs, epochs=100)
 
     model.viz_embeddings(phonemes_vocab)
     model.save_model()
