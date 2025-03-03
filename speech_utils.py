@@ -1,8 +1,7 @@
 import torch
 import torchaudio
-from torchaudio.functional import spectrogram
 
-# From NVIDIA TacoTron2 params
+# From NVIDIA TacoTron2 params  https://github.com/rayhane-mamah/tacotron-2/blob/master/hparams.py
 sr = 22050
 n_fft = 2048
 n_stft = int((n_fft//2) + 1)

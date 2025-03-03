@@ -9,7 +9,7 @@ from embed_text import add_text_to_vocab
 from embed_phoneme import add_phonemes_to_vocab
 from speech_utils import SpeechConverter
 from consts import PAD
-from sanity import make_sure_dicts_work
+from sanity import make_sure_tables_work
 
 
 class SpeechDataset(Dataset):
@@ -32,11 +32,13 @@ class SpeechDataset(Dataset):
         text = self.dataset[idx][self.text_col]
         phoneme = self.dataset[idx][self.phoneme_col]
         audio_waveform = self.dataset[idx]['audio']['array']
+
         # sr is constant for the dataset, use speech_utils.sr
         # sampling_rate = self.hf_dataset[idx]['audio']['sampling_rate']
 
         # Apply text_to_seq_fn to the text
         text_seq = self.text_to_seq_fn(text, self.text_symb_idx)
+        # same for phoneme
         phoneme_seq = self.phoneme_to_seq_fn(phoneme, self.phoneme_symb_idx)
         # Processing the wave-form
         # with warnings.catch_warnings():
@@ -86,13 +88,16 @@ def speech_collate_fn(batch, text_symb_idx, phoneme_symb_idx):
     print("In collate", padded_mel_specs.shape, stop_token_targets.shape)
     return padded_text_seqs, text_seq_lens, padded_phoneme_seqs, phoneme_seq_lens, padded_mel_specs, mel_spec_lens, stop_token_targets
 
-
+# TODO: figure out why the lambda can't pass through multiple processes
 def get_data_loader(dataset: Dataset, batch_size, text_symb_idx, phoneme_symb_idx, shuffle=True, num_workers=0) -> DataLoader:
     return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, collate_fn=lambda batch: speech_collate_fn(batch_size, text_symb_idx, phoneme_symb_idx),
                       num_workers=num_workers)
 
 
+
+#TODO: Clean this up, super messy.
 def load_data(batch_size, mel_bins=128, subsample_ratio=None):
+
     # load dataset
     dataset = load_dataset('Data/')['train']
     if subsample_ratio is not None:  # Used for testing model arch
@@ -108,27 +113,36 @@ def load_data(batch_size, mel_bins=128, subsample_ratio=None):
     hf_test_dataset = hf_split_datadict['test']
     print(f'Dataset Sizes: Train ({len(hf_train_dataset)}), Val ({len(hf_val_dataset)}), Test ({len(hf_test_dataset)})')
 
+    #creation of text vocabs for each split
     train_text_vocab = add_text_to_vocab(hf_train_dataset)
     val_text_vocab = add_text_to_vocab(hf_val_dataset)
     test_text_vocab = add_text_to_vocab(hf_test_dataset)
+
+    #creation of phoneme vocabs for each split
+    train_phoneme_vocab = add_phonemes_to_vocab(hf_train_dataset)
+    val_phoneme_vocab = add_phonemes_to_vocab(hf_val_dataset)
+    test_phoneme_vocab = add_phonemes_to_vocab(hf_test_dataset)
+
+    #creation of text lookup tables for each split
     train_text_symb_idx = symbol_to_idx(train_text_vocab)
     val_text_symb_idx = symbol_to_idx(val_text_vocab)
     test_text_symb_idx = symbol_to_idx(test_text_vocab)
 
-    train_phoneme_vocab = add_phonemes_to_vocab(hf_train_dataset)
-    val_phoneme_vocab = add_phonemes_to_vocab(hf_val_dataset)
-    test_phoneme_vocab = add_phonemes_to_vocab(hf_test_dataset)
+    #creation of phoneme lookup tables for each split
     train_phoneme_symb_idx = symbol_to_idx(train_phoneme_vocab)
     val_phoneme_symb_idx = symbol_to_idx(val_phoneme_vocab)
     test_phoneme_symb_idx = symbol_to_idx(test_phoneme_vocab)
 
-    make_sure_dicts_work(train_phoneme_vocab, train_phoneme_symb_idx)
-    make_sure_dicts_work(val_phoneme_vocab, val_phoneme_symb_idx)
+    # tests to make sure that the chars match, see sanity.py
+    make_sure_tables_work(train_phoneme_vocab, train_phoneme_symb_idx)
+    make_sure_tables_work(val_phoneme_vocab, val_phoneme_symb_idx)
+    # not touching test with a 10 foot pole here
 
     #convert hf_dataset to pytorch datasets
     train_ds = SpeechDataset(hf_train_dataset, num_mels=mel_bins, text_symb_idx=train_text_symb_idx, phoneme_symb_idx=train_phoneme_symb_idx)
     val_ds = SpeechDataset(hf_val_dataset, num_mels=mel_bins, text_symb_idx=val_text_symb_idx, phoneme_symb_idx = val_phoneme_symb_idx)
     test_ds = SpeechDataset(hf_test_dataset, num_mels=mel_bins, text_symb_idx=test_text_symb_idx, phoneme_symb_idx = test_phoneme_symb_idx)
+
     # convert datasets to dataloader
     train_dl = get_data_loader(train_ds, batch_size, train_text_symb_idx, phoneme_symb_idx=train_phoneme_symb_idx, num_workers=3)
     val_dl = get_data_loader(val_ds, batch_size, text_symb_idx=val_text_symb_idx, phoneme_symb_idx=val_phoneme_symb_idx, shuffle=False, num_workers=1)
@@ -138,8 +152,8 @@ def load_data(batch_size, mel_bins=128, subsample_ratio=None):
 
 
 if __name__ == "__main__":
-    train_dl, val_dl, test_dl = load_data(64, mel_bins=80, subsample_ratio=None )
+    train_dl, val_dl, test_dl = load_data(64, mel_bins=80, subsample_ratio=None)
     sample = train_dl.dataset[3]
-    print(f"Text: {sample[0]}")  # Print the text sequence
-    print(f"Phonemes: {sample[1]}")  # Print the phoneme sequence
-    print(f"Mel Spectrogram shape: {sample[2].shape}")  # Print the mel spectrogram shape
+    print(f"text: {sample[0]}") # text sample from 4th entry of the train set (randomly shuffled, more of a sanity check since stuff keeps breaking)
+    print(f"foenem: {sample[1]}") # phoneme sample from 4th entry of the train set (randomly shuffled, more of a sanity check since stuff keeps breaking)
+    print(f"mel spec shape: {sample[2].shape}") # shape of mel spectrogram from 4th entry of the train set (randomly shuffled, more of a sanity check since stuff keeps breaking)

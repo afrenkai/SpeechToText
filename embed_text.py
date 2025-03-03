@@ -97,6 +97,7 @@ class TextEmbedding(nn.Module):
         else:
             print('no model found, training from begin lol')
 
+    @staticmethod
     def plot_loss(self, losses: list):
         plt.plot(losses)
         plt.xlabel('Epochs')
