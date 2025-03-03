@@ -44,6 +44,8 @@ class SpeechDataset(Dataset):
         #     mel_transform = MelSpectrogram(sampling_rate, n_mels=self.num_mels)
         # mel_spec = mel_transform(audio_waveform)
         mel_spec = self.speech_converter.convert_to_mel_spec(audio_waveform)
+        print(f"Audio shape: {audio_waveform.shape}")
+        print(f"Mel Spectrogram shape: {mel_spec.shape}")
 
         return text_seq, phoneme_seq, mel_spec
 
@@ -78,15 +80,15 @@ def speech_collate_fn(batch, text_symb_idx, phoneme_symb_idx):
     padded_phoneme_seqs = pad_sequence(phoneme_seqs, batch_first=True, padding_value=phoneme_symb_idx.get(PAD))
     padded_mel_specs = pad_sequence(mel_specs_t, batch_first=True, padding_value=0)
     text_seq_lens = torch.IntTensor(text_seq_lens)
-    phoneme_seq_lens = torch.IntTensoir(phoneme_seq_lens)
+    phoneme_seq_lens = torch.IntTensor(phoneme_seq_lens)
     mel_spec_lens = torch.IntTensor(mel_spec_lens)
     stop_token_targets = torch.stack(stop_token_targets)
     print("In collate", padded_mel_specs.shape, stop_token_targets.shape)
     return padded_text_seqs, text_seq_lens, padded_phoneme_seqs, phoneme_seq_lens, padded_mel_specs, mel_spec_lens, stop_token_targets
 
 
-def get_data_loader(dataset: Dataset, batch_size, shuffle=True, num_workers=0) -> DataLoader:
-    return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, collate_fn=speech_collate_fn,
+def get_data_loader(dataset: Dataset, batch_size, text_symb_idx, phoneme_symb_idx, shuffle=True, num_workers=0) -> DataLoader:
+    return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, collate_fn=lambda batch: speech_collate_fn(batch_size, text_symb_idx, phoneme_symb_idx),
                       num_workers=num_workers)
 
 
@@ -122,19 +124,22 @@ def load_data(batch_size, mel_bins=128, subsample_ratio=None):
 
     make_sure_dicts_work(train_phoneme_vocab, train_phoneme_symb_idx)
     make_sure_dicts_work(val_phoneme_vocab, val_phoneme_symb_idx)
+
     #convert hf_dataset to pytorch datasets
     train_ds = SpeechDataset(hf_train_dataset, num_mels=mel_bins, text_symb_idx=train_text_symb_idx, phoneme_symb_idx=train_phoneme_symb_idx)
     val_ds = SpeechDataset(hf_val_dataset, num_mels=mel_bins, text_symb_idx=val_text_symb_idx, phoneme_symb_idx = val_phoneme_symb_idx)
     test_ds = SpeechDataset(hf_test_dataset, num_mels=mel_bins, text_symb_idx=test_text_symb_idx, phoneme_symb_idx = test_phoneme_symb_idx)
     # convert datasets to dataloader
-    train_dl = get_data_loader(train_ds, batch_size, num_workers=3)
-    val_dl = get_data_loader(val_ds, batch_size, shuffle=False, num_workers=1)
-    test_dl = get_data_loader(test_ds, batch_size, shuffle=False, num_workers=1)
+    train_dl = get_data_loader(train_ds, batch_size, train_text_symb_idx, phoneme_symb_idx=train_phoneme_symb_idx, num_workers=3)
+    val_dl = get_data_loader(val_ds, batch_size, text_symb_idx=val_text_symb_idx, phoneme_symb_idx=val_phoneme_symb_idx, shuffle=False, num_workers=1)
+    test_dl = get_data_loader(test_ds, batch_size, text_symb_idx=test_text_symb_idx, phoneme_symb_idx=test_phoneme_symb_idx, shuffle=False, num_workers=1)
+
     return train_dl, val_dl, test_dl
 
 
 if __name__ == "__main__":
     train_dl, val_dl, test_dl = load_data(64, mel_bins=80, subsample_ratio=None )
-    print(train_dl.dataset[3][0]) #random text data example from validation dataloader to make sure the audio and text tensors get made. working on phoneme tensor next
-    print(train_dl.dataset[3][1]) #random audio data example from train dataloader to make sure the audio and text tensors get made. working on phoneme tensor next
-    print(train_dl.dataset[3][2])
+    sample = train_dl.dataset[3]
+    print(f"Text: {sample[0]}")  # Print the text sequence
+    print(f"Phonemes: {sample[1]}")  # Print the phoneme sequence
+    print(f"Mel Spectrogram shape: {sample[2].shape}")  # Print the mel spectrogram shape
