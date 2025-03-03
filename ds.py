@@ -6,32 +6,38 @@ from torch.nn.utils.rnn import pad_sequence
 
 from embedding_utils import text_to_seq_per_char, symbol_to_idx
 from embed_text import add_text_to_vocab
+from embed_phoneme import add_phonemes_to_vocab
 from speech_utils import SpeechConverter
 from consts import PAD
+from sanity import make_sure_dicts_work
+
 
 class SpeechDataset(Dataset):
-    def __init__(self, dataset: Dataset, symb_idx: dict, num_mels=128,
-                 text_col='normalized_text', phoneme_col='phonemes', text_to_seq_fn=text_to_seq_per_char, ):
+    def __init__(self, dataset: Dataset, text_symb_idx: dict, phoneme_symb_idx, num_mels=128,
+                 text_col='normalized_text', phoneme_col='phonemes', text_to_seq_fn=text_to_seq_per_char, phoneme_to_seq_fn = text_to_seq_per_char):
         self.dataset = dataset
         self.num_mels = num_mels
         self.text_col = text_col
         self.phoneme_col = phoneme_col
         self.text_to_seq_fn = text_to_seq_fn
+        self.phoneme_to_seq_fn = phoneme_to_seq_fn
         self.speech_converter = SpeechConverter(self.num_mels)
-        self.symb_idx = symb_idx
+        self.text_symb_idx = text_symb_idx
+        self.phoneme_symb_idx = phoneme_symb_idx
 
     def __len__(self) -> int:
         return len(self.dataset)
 
-    def __getitem__(self, idx) -> Tuple[torch.IntTensor, torch.Tensor]:
+    def __getitem__(self, idx) -> Tuple[torch.IntTensor, torch.IntTensor, torch.Tensor]:
         text = self.dataset[idx][self.text_col]
+        phoneme = self.dataset[idx][self.phoneme_col]
         audio_waveform = self.dataset[idx]['audio']['array']
         # sr is constant for the dataset, use speech_utils.sr
         # sampling_rate = self.hf_dataset[idx]['audio']['sampling_rate']
 
         # Apply text_to_seq_fn to the text
-        text_seq = self.text_to_seq_fn(text, self.symb_idx)
-
+        text_seq = self.text_to_seq_fn(text, self.text_symb_idx)
+        phoneme_seq = self.phoneme_to_seq_fn(phoneme, self.phoneme_symb_idx)
         # Processing the wave-form
         # with warnings.catch_warnings():
         #     warnings.filterwarnings("ignore", category=UserWarning)
@@ -39,15 +45,15 @@ class SpeechDataset(Dataset):
         # mel_spec = mel_transform(audio_waveform)
         mel_spec = self.speech_converter.convert_to_mel_spec(audio_waveform)
 
-        return text_seq, mel_spec
+        return text_seq, phoneme_seq, mel_spec
 
 
-def speech_collate_fn(batch, symb_idx):
+def speech_collate_fn(batch, text_symb_idx, phoneme_symb_idx):
     # sort the batch based on input text (this is needed for pack_padded_sequence)
     batch.sort(key=lambda x: len(x[0]), reverse=True)
-    text_seqs, mel_specs = zip(*batch)
+    text_seqs, phoneme_seqs, mel_specs = zip(*batch)
     text_seq_lens = [text_seq.shape[-1] for text_seq in text_seqs]  # batch first
-
+    phoneme_seq_lens = [phoneme_seq.shape[-1] for phoneme_seq in phoneme_seqs]  # batch first
     mel_specs_t = []
     mel_spec_lens = []
     max_mel_seq = -1
@@ -68,13 +74,15 @@ def speech_collate_fn(batch, symb_idx):
     # pad sequence so pytorch can batch them together
     # alternatives using the minimum from the batch
     # this is using the right padding for samples that have seq_len < max_batch_seq_len
-    padded_text_seqs = pad_sequence(text_seqs, batch_first=True, padding_value=symb_idx.get(PAD))
+    padded_text_seqs = pad_sequence(text_seqs, batch_first=True, padding_value=text_symb_idx.get(PAD))
+    padded_phoneme_seqs = pad_sequence(phoneme_seqs, batch_first=True, padding_value=phoneme_symb_idx.get(PAD))
     padded_mel_specs = pad_sequence(mel_specs_t, batch_first=True, padding_value=0)
     text_seq_lens = torch.IntTensor(text_seq_lens)
+    phoneme_seq_lens = torch.IntTensoir(phoneme_seq_lens)
     mel_spec_lens = torch.IntTensor(mel_spec_lens)
     stop_token_targets = torch.stack(stop_token_targets)
     print("In collate", padded_mel_specs.shape, stop_token_targets.shape)
-    return padded_text_seqs, text_seq_lens, padded_mel_specs, mel_spec_lens, stop_token_targets
+    return padded_text_seqs, text_seq_lens, padded_phoneme_seqs, phoneme_seq_lens, padded_mel_specs, mel_spec_lens, stop_token_targets
 
 
 def get_data_loader(dataset: Dataset, batch_size, shuffle=True, num_workers=0) -> DataLoader:
@@ -97,16 +105,27 @@ def load_data(batch_size, mel_bins=128, subsample_ratio=None):
     hf_val_dataset = hf_split_datadict['train']
     hf_test_dataset = hf_split_datadict['test']
     print(f'Dataset Sizes: Train ({len(hf_train_dataset)}), Val ({len(hf_val_dataset)}), Test ({len(hf_test_dataset)})')
-    # convert hf_dataset to pytorch datasets
+
     train_text_vocab = add_text_to_vocab(hf_train_dataset)
     val_text_vocab = add_text_to_vocab(hf_val_dataset)
     test_text_vocab = add_text_to_vocab(hf_test_dataset)
     train_text_symb_idx = symbol_to_idx(train_text_vocab)
     val_text_symb_idx = symbol_to_idx(val_text_vocab)
     test_text_symb_idx = symbol_to_idx(test_text_vocab)
-    train_ds = SpeechDataset(hf_train_dataset, num_mels=mel_bins, symb_idx = train_text_symb_idx)
-    val_ds = SpeechDataset(hf_val_dataset, num_mels=mel_bins, symb_idx = val_text_symb_idx)
-    test_ds = SpeechDataset(hf_test_dataset, num_mels=mel_bins, symb_idx = test_text_symb_idx)
+
+    train_phoneme_vocab = add_phonemes_to_vocab(hf_train_dataset)
+    val_phoneme_vocab = add_phonemes_to_vocab(hf_val_dataset)
+    test_phoneme_vocab = add_phonemes_to_vocab(hf_test_dataset)
+    train_phoneme_symb_idx = symbol_to_idx(train_phoneme_vocab)
+    val_phoneme_symb_idx = symbol_to_idx(val_phoneme_vocab)
+    test_phoneme_symb_idx = symbol_to_idx(test_phoneme_vocab)
+
+    make_sure_dicts_work(train_phoneme_vocab, train_phoneme_symb_idx)
+    make_sure_dicts_work(val_phoneme_vocab, val_phoneme_symb_idx)
+    #convert hf_dataset to pytorch datasets
+    train_ds = SpeechDataset(hf_train_dataset, num_mels=mel_bins, text_symb_idx=train_text_symb_idx, phoneme_symb_idx=train_phoneme_symb_idx)
+    val_ds = SpeechDataset(hf_val_dataset, num_mels=mel_bins, text_symb_idx=val_text_symb_idx, phoneme_symb_idx = val_phoneme_symb_idx)
+    test_ds = SpeechDataset(hf_test_dataset, num_mels=mel_bins, text_symb_idx=test_text_symb_idx, phoneme_symb_idx = test_phoneme_symb_idx)
     # convert datasets to dataloader
     train_dl = get_data_loader(train_ds, batch_size, num_workers=3)
     val_dl = get_data_loader(val_ds, batch_size, shuffle=False, num_workers=1)
@@ -116,4 +135,6 @@ def load_data(batch_size, mel_bins=128, subsample_ratio=None):
 
 if __name__ == "__main__":
     train_dl, val_dl, test_dl = load_data(64, mel_bins=80, subsample_ratio=None )
-    print(val_dl.dataset[3])
+    print(train_dl.dataset[3][0]) #random text data example from validation dataloader to make sure the audio and text tensors get made. working on phoneme tensor next
+    print(train_dl.dataset[3][1]) #random audio data example from train dataloader to make sure the audio and text tensors get made. working on phoneme tensor next
+    print(train_dl.dataset[3][2])
