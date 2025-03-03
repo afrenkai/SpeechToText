@@ -24,7 +24,7 @@ class AudioEmbed(nn.Module):
     def forward(self, x):
         x = torch.relu(torch.BatchNorm(self.conv1(x)))
         x = torch.relu(torch.BatchNorm(self.conv2(x)))
-        x - self.pool(x).squeeze(-1) #bs x 128
+        x = self.pool(x).squeeze(-1) #bs x 128
         x = self.fc(x)
         return x
 
